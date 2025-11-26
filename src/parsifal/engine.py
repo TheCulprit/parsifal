@@ -297,12 +297,52 @@ class GrammarParser:
         parts = []
         last_split = 0
         depth = 0
-        for i, char in enumerate(text):
-            if char == '[': depth += 1
-            elif char == ']': depth -= 1
-            elif char == separator and depth == 0:
+        container_depth = 0
+        
+        i = 0
+        n = len(text)
+        
+        while i < n:
+            char = text[i]
+            
+            if char == '[':
+                # Attempt to identify tag to handle nested containers properly
+                j = i + 1
+                is_close = False
+                
+                if j < n and text[j] == '/':
+                    is_close = True
+                    j += 1
+                
+                # Skip leading whitespace
+                while j < n and text[j].isspace():
+                    j += 1
+                
+                # Extract potential tag name
+                name_start = j
+                while j < n and (text[j].isalnum() or text[j] in ('_', '#', '@')):
+                    j += 1
+                
+                tag_name = text[name_start:j]
+                
+                # Check if this tag is a registered container
+                if tag_name in self.commands and self.commands[tag_name].is_container:
+                    if is_close:
+                        container_depth = max(0, container_depth - 1)
+                    else:
+                        container_depth += 1
+                
+                depth += 1
+                
+            elif char == ']':
+                depth = max(0, depth - 1)
+                
+            elif char == separator and depth == 0 and container_depth == 0:
                 parts.append(text[last_split:i])
                 last_split = i + 1
+                
+            i += 1
+            
         parts.append(text[last_split:])
         return [p.strip() for p in parts if p.strip()]
 
@@ -841,7 +881,8 @@ class CmdRan(BaseCommand):
                 return ",".join([parser.parse(opt) for opt in selected]), True
         
         lines = parser.split_safe(content, separator='\n')
-        lines = [l.strip() for l in lines if l.strip()]
+        # Filter empty lines
+        lines = [l for l in lines if l]
 
         if len(lines) > 1:
             if count == 1:
@@ -849,6 +890,10 @@ class CmdRan(BaseCommand):
             else:
                 selected = parser.rng.choices(lines, k=count) if count > len(lines) else parser.rng.sample(lines, k=count)
                 return ",".join([parser.parse(opt) for opt in selected]), True
+        
+        # Fallback for single item (lines found 1 item, or options found 1 item, which is the whole content)
+        if len(lines) == 1:
+             return parser.parse(lines[0]), True
         
         return "", False
 
