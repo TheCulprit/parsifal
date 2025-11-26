@@ -312,6 +312,7 @@ def test_registry(parser):
     print("\n=== CATEGORY: Registry ===")
 
     # 1. [register]
+    # UPDATED: Changed tags= to required=
     parser.parse("[register tags=t1,item1]Item1[/register]")
     parser.parse("[register tags=t1,item2]Item2[/register]")
     
@@ -326,11 +327,13 @@ def test_registry(parser):
     check(parser, "[select tags=t1 exclude=item1]", "Item2", "Select: Exclusion")
 
     # 4. [intercept]
+    # NOTE: Intercept still uses tags= logic in the engine
     parser.parse("[intercept tags=t1]Intercepted[/intercept]")
     check(parser, "[select t1]", "Intercepted", "Intercept: Trigger")
 
     # 5. [pass]
     parser = GrammarParser(root_dir=".", seed=42)
+    # UPDATED: Changed tags= to required=
     parser.parse("[register tags=test]Original[/register]")
     parser.parse("[intercept tags=test]Filtered [pass][/intercept]")
     

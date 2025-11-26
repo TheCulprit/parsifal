@@ -101,15 +101,6 @@ Beyond simple randomness, Parsifal offers control flow tools:
 
 ## 📚 Syntax Reference
 
-### 📝 Command Syntax Overview
-All commands follow this structure: `[command positional_arg key="value"]`
-
-*   **Positional:** The first value (if supported) does not need a name (e.g., `[inc score]`).
-*   **Named:** Key/Value pairs (e.g., `[loop count="5"]`).
-*   **Quotes:** Always use quotes (`""` or `''`) if your value contains spaces or commas.
-
----
-
 ### 🎲 Randomization & Lists
 
 #### `[ran]`
@@ -120,16 +111,9 @@ Picks one or more items from a list.
 *   **Separators:**
     *   Use `|` to separate items on the same line.
     *   **OR** use newlines to separate items.
-    *   *Warning:* Do not mix both. If a `|` is detected, newlines are treated as whitespace.
 
 ```text
-[#] Simple Pick [/#]
 [ran]Red|Blue|Green[/ran]
-
-[#] Multi-Pick (Result: "Red, Green") [/#]
-[ran count="2"]Red|Blue|Green[/ran]
-
-[#] Newline List [/#]
 [ran]
     Item A
     Item B
@@ -139,26 +123,20 @@ Picks one or more items from a list.
 #### `[shuffle]`
 Randomizes a list and returns **all** items.
 *   **Syntax:** `[shuffle sep=", "]A|B|C[/shuffle]`
-*   **Arguments:**
-    *   `sep` (optional): String used to join the result. Default is `|` or newline depending on input.
 
 #### `[range]`
 Returns a random number within a range.
-*   **Syntax:** `[range min="1" max="10"]` OR `[range 1|10]`
-*   **Logic:**
-    *   If inputs are integers (e.g., 1, 10), returns a random **integer** (inclusive).
-    *   If inputs contain decimals (e.g., 0.5, 1.0), returns a random **float**.
+*   **Syntax:** `[range min="1" max="10"]` OR `[range 1 10]`
+*   **Logic:** Returns integer if inputs are integers, float if inputs contain decimals.
 
 #### `[chance]`
 A probabilistic coin flip.
 *   **Syntax:** `[chance 50]Content[/chance]`
-*   **Arguments:**
-    *   `value` (Positional or Named): The percentage chance (0-100) to render the inner content.
 
-#### `[rw]` (Random Weight)
-Appends a random weight to a tag. Useful for AI prompts (e.g., Stable Diffusion).
-*   **Syntax:** `[rw]tag[/rw]`
-*   **Output:** `(tag:1.24)` (Random weight between 1.0 and 1.5).
+#### `[rw]` & `[irw]`
+Appends a random weight to a tag (Common in AI prompting).
+*   **Syntax:** `[rw]tag[/rw]` → `(tag:1.24)`
+*   **Syntax:** `[irw]tag[/irw]` → `(tag)1.24` (InvokeAI style)
 
 ---
 
@@ -167,8 +145,6 @@ Appends a random weight to a tag. Useful for AI prompts (e.g., Stable Diffusion)
 #### `[register]`
 Adds content to the global selection pool.
 *   **Syntax:** `[register tags="tag1, tag2"]Content[/register]`
-*   **Arguments:**
-    *   `tags`: Comma-separated list of tags used to categorize this item.
 
 #### `[select]`
 Picks a random item from the registry based on criteria.
@@ -180,7 +156,62 @@ Picks a random item from the registry based on criteria.
 
 ```text
 [#] Pick a vehicle that is NOT broken [/#]
-[sele
+[select required="vehicle" exclude="broken"]
+```
+
+#### `[intercept]`
+Defines a specific override for a selection combination.
+*   **Syntax:** `[intercept tags="tag1, tag2"]Content[/intercept]`
+*   **Usage:** If `[select]` picks an item containing these tags, run this content instead.
+
+#### `[pass]`
+Used inside an `[intercept]` block. Signals the parser to abandon the intercept and run the original content (or the next valid intercept) instead.
+
+---
+
+### 🔧 Variables & Logic
+
+#### `[set]` / `[get]`
+Store and retrieve variables.
+*   `[set name="color"]Red[/set]`
+*   `[get color]`
+
+#### `[inc]` / `[dec]`
+Increment or decrement a numeric variable.
+*   `[inc score]` / `[dec lives]`
+
+#### `[calc]`
+Performs math operations.
+*   `[calc]1 + 5 * 2[/calc]`
+
+#### `[if]` / `[elseif]` / `[else]`
+Conditional flow.
+*   `[if score > 10]...[/if]`
+*   `[if my_var == "true"]...[/if]`
+*   `[elseif 50%]...[/elseif]` (Can also be used as a probabilistic check).
+
+#### `[switch]`
+Pattern matching for variables.
+```text
+[switch var="status"]
+    [case "alert"]Red Alert[/case]
+    [case "calm"]All Clear[/case]
+    [default]Unknown[/default]
+[/switch]
+```
+
+#### `[def]` / `[call]`
+Define and call reusable macros (functions).
+*   `[def name="header"]=== CHAPTER 1 ===[/def]`
+*   `[call name="header"]`
+
+---
+
+### 📁 File Operations
+
+*   **`[library dir="path"]`**: Recursively loads all text files in a directory into the Registry.
+*   **`[file name="path"]`**: Injects the contents of a specific file.
+*   **`[all dir="path"]`**: Injects the contents of *all* files in a directory joined together.
 
 ## 💻 Development
 
@@ -192,7 +223,7 @@ This project is managed with `uv`.
    cd parsifal
    ```
 
-2. **Run the CLI:**
+2. **Run the CLI (Example):**
    ```bash
    uv run parsifal "[ran]It works!|Hello![/ran]"
    ```
