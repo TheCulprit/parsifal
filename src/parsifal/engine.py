@@ -89,9 +89,8 @@ class GrammarParser:
         # STANDALONE
         self.register_command(CmdStop())
         self.register_command(CmdBreak())
-        self.register_command(CmdPass()) # New command
+        self.register_command(CmdPass())
         self.register_command(CmdLog())
-        self.register_command(CmdOverride())
         self.register_command(CmdGet())
         self.register_command(CmdInc())
         self.register_command(CmdDec())
@@ -105,6 +104,8 @@ class GrammarParser:
 
         # CONTAINER
         self.register_command(CmdSet())
+        self.register_command(CmdOverride())
+        self.register_command(CmdCalc())
         self.register_command(CmdIf())
         self.register_command(CmdElseIf())
         self.register_command(CmdElse())
@@ -117,13 +118,15 @@ class GrammarParser:
         self.register_command(CmdShuffle())
         self.register_command(CmdJoin())
         self.register_command(CmdChance())
-        self.register_command(CmdCalc())
         self.register_command(CmdLen())
         self.register_command(CmdComment())
         self.register_command(CmdCommentHash())
         self.register_command(CmdIgnore())
         self.register_command(CmdMute())
+        
+        # WEIGHTING COMMANDS
         self.register_command(CmdRW())
+        self.register_command(CmdIRW())
 
     def _cleanup_text(self, text: str) -> str:
         text = re.sub(r'[\r\n]+', '\n', text)
@@ -280,12 +283,10 @@ class GrammarParser:
         results = []
         for file_path in files:
             # --- IGNORE DOT DIRECTORIES ---
-            # This prevents loading files from .vscode, .git, etc.
             rel_path = os.path.relpath(file_path, self.root_abs)
             if any(part.startswith('.') for part in rel_path.split(os.sep)):
                 continue
-            # ------------------------------
-
+            
             if not os.path.isfile(file_path): continue
             try:
                 with open(file_path, 'r', encoding='utf-8') as f: results.append(f.read())
@@ -412,11 +413,6 @@ class CmdLibrary(BaseCommand):
 class CmdSelect(BaseCommand):
     """
     Selects a random item from the registry matching criteria.
-    
-    Post-Selection Intercept Logic:
-    1. A registry item is selected based on criteria.
-    2. The item's tags are checked against defined [intercept] keys.
-    3. If a match is found, the intercept replaces the item content.
     """
     def __init__(self):
         self.name = "select"
@@ -467,10 +463,6 @@ class CmdSelect(BaseCommand):
         winner_tags = selected_item["tags"]
 
         # --- 3. Check for Intercepts on the Winner ---
-        # We check if any defined intercept is a SUBSET of the WINNER'S tags.
-        # Example: Winner tags: {outfit, female, school}
-        # Intercept tags: {outfit, school} -> MATCH
-        
         potential_intercepts = []
         for key, val in parser.intercepts.items():
             int_tags = set(key.split('|'))
@@ -482,22 +474,16 @@ class CmdSelect(BaseCommand):
 
         # --- 4. Attempt Execution ---
         for _, int_content in potential_intercepts:
-            # Reset pass flag
             parser.intercept_pass_triggered = False
-            
-            # Try parsing the intercept
             result = parser.parse(int_content)
             
-            # If [pass] triggered, ignore this result and try next intercept (or fallback)
             if parser.intercept_pass_triggered:
                 parser.intercept_pass_triggered = False
                 continue
             
-            # Intercept successful
             return result, True
 
         # --- 5. Fallback to Original Item ---
-        # If no intercepts matched, or all matched intercepts called [pass]
         return parser.parse(selected_item["content"]), True
 
 # --- Standard Commands ---
@@ -552,18 +538,17 @@ class CmdSet(BaseCommand):
 class CmdOverride(BaseCommand):
     def __init__(self):
         self.name = "override"
-        self.is_container = False
+        self.is_container = True
 
     def execute(self, parser: GrammarParser, arg: str, content: str) -> Tuple[str, bool]:
         args, kwargs = self.parse_args(arg)
-        for k, v in kwargs.items():
-            if k in ('val', 'value'): continue
-            parser.overrides[k] = v
-        if len(args) >= 2:
-            parser.overrides[args[0]] = args[1]
-        elif len(args) == 1 and ('val' in kwargs or 'value' in kwargs):
-            val = kwargs.get('val') or kwargs.get('value')
-            parser.overrides[args[0]] = val
+        var_name = kwargs.get("name", args[0] if args else "")
+        
+        if var_name:
+            # Parse the content to allow dynamic values inside the override block
+            val = parser.parse(content)
+            parser.overrides[var_name] = val
+            
         return "", False
 
 class CmdInc(BaseCommand):
@@ -652,35 +637,55 @@ class CmdLen(BaseCommand):
         return str(len(target)), False
 
 class CmdRange(BaseCommand):
+    """
+    Generates a random number.
+    Usage:
+      [range] -> float 0.0 to 1.0 (3 dec)
+      [range 10] -> integer 0 to 10
+      [range 5 10] -> integer 5 to 10
+      [range 0.5 1.5] -> float 0.5 to 1.5 (3 dec)
+      [range min=2 max=4] -> integer 2 to 4
+    """
     def __init__(self):
         self.name = "range"
         self.is_container = False
 
     def execute(self, parser: GrammarParser, arg: str, content: str) -> Tuple[str, bool]:
         args, kwargs = self.parse_args(arg)
-        v1, v2 = None, None
         
-        if args and '|' in args[0]:
-            parts = args[0].split('|')
-            v1, v2 = parts[0], parts[1]
-        elif len(args) >= 2:
-            v1, v2 = args[0], args[1]
-        elif len(args) == 1:
-            v1 = args[0]
-            v2 = kwargs.get("max")
-        else:
-            v1 = kwargs.get("min")
-            v2 = kwargs.get("max")
+        # Default behavior: float 0.0 to 1.0
+        min_v = 0.0
+        max_v = 1.0
+        is_float_mode = False
+        has_args = False
 
-        if v1 and v2:
-            try:
-                is_float = '.' in str(v1) or '.' in str(v2)
-                if is_float:
-                    return f"{parser.rng.uniform(float(v1), float(v2)):.2f}", False
-                else:
-                    return str(parser.rng.randint(int(v1), int(v2))), False
-            except: pass
-        return "", False
+        v1_str = args[0] if len(args) > 0 else kwargs.get("min")
+        v2_str = args[1] if len(args) > 1 else kwargs.get("max")
+
+        if v1_str is not None:
+            has_args = True
+            if '.' in str(v1_str): is_float_mode = True
+            
+            if v2_str is not None:
+                if '.' in str(v2_str): is_float_mode = True
+                try:
+                    min_v = float(v1_str)
+                    max_v = float(v2_str)
+                except: pass
+            else:
+                # One argument usually implies max (0 to Max)
+                try:
+                    max_v = float(v1_str)
+                    min_v = 0.0
+                except: pass
+        
+        if not has_args:
+            return f"{parser.rng.uniform(0.0, 1.0):.3f}", False
+        
+        if is_float_mode:
+            return f"{parser.rng.uniform(min_v, max_v):.3f}", False
+        else:
+            return str(parser.rng.randint(int(min_v), int(max_v))), False
 
 class CmdDef(BaseCommand):
     def __init__(self):
@@ -793,7 +798,6 @@ class CmdLoop(BaseCommand):
 class CmdChance(BaseCommand):
     """
     Probabilistic output.
-    Safely handles nested conditions.
     """
     def __init__(self):
         self.name = "chance"
@@ -848,7 +852,76 @@ class CmdRan(BaseCommand):
         
         return "", False
 
+# --- Weighting Commands ---
+
+def _generate_weight(parser: GrammarParser, args: List[str], kwargs: Dict[str, str]) -> str:
+    """Helper to generate a random weight using range logic but with different defaults (1.0-1.4)."""
+    # Defaults for weighting
+    min_v = 1.0
+    max_v = 1.4
+    
+    # Logic copied from CmdRange (mostly)
+    is_float_mode = True # Default to float for weights
+    has_args = False
+
+    v1_str = args[0] if len(args) > 0 else kwargs.get("min")
+    v2_str = args[1] if len(args) > 1 else kwargs.get("max")
+
+    if v1_str is not None:
+        has_args = True
+        # If user provides explicit args, we respect them, and switch to int if no dots found?
+        # For weighting, usually people want floats. But strict range logic says "int if no dots".
+        is_float_mode = False 
+        if '.' in str(v1_str): is_float_mode = True
+        
+        if v2_str is not None:
+            if '.' in str(v2_str): is_float_mode = True
+            try:
+                min_v = float(v1_str)
+                max_v = float(v2_str)
+            except: pass
+        else:
+            # For Range, 1 arg = max (0 to Max). 
+            # For Weights, if I type [rw 1.5], do I want 0 to 1.5? Probably.
+            try:
+                max_v = float(v1_str)
+                min_v = 0.0
+            except: pass
+            
+    if not has_args:
+        # Defaults 1.0 to 1.4 float
+        return f"{parser.rng.uniform(min_v, max_v):.3f}"
+        
+    if is_float_mode:
+        return f"{parser.rng.uniform(min_v, max_v):.3f}"
+    else:
+        return str(parser.rng.randint(int(min_v), int(max_v)))
+
+class CmdIRW(BaseCommand):
+    """
+    InvokeAI Random Weight.
+    Syntax: (content)weight
+    Default weight: 1.0 to 1.4
+    """
+    def __init__(self):
+        self.name = "irw"
+        self.is_container = True
+
+    def execute(self, parser: GrammarParser, arg: str, content: str) -> Tuple[str, bool]:
+        processed_content = parser.parse(content)
+        if not processed_content: return "", False
+        
+        args, kwargs = self.parse_args(arg)
+        weight = _generate_weight(parser, args, kwargs)
+        
+        return f"({processed_content}){weight}", False
+
 class CmdRW(BaseCommand):
+    """
+    Standard Random Weight.
+    Syntax: (content:weight)
+    Default weight: 1.0 to 1.4
+    """
     def __init__(self):
         self.name = "rw"
         self.is_container = True
@@ -857,22 +930,10 @@ class CmdRW(BaseCommand):
         processed_content = parser.parse(content)
         if not processed_content: return "", False
 
-        min_val, max_val = 1.0, 1.5
-        args, _ = self.parse_args(arg)
-
-        if args:
-            if len(args) == 1 and ' ' in args[0]:
-                parts = args[0].split()
-                try: min_val, max_val = float(parts[0]), float(parts[1])
-                except: pass
-            elif len(args) >= 2:
-                try: min_val, max_val = float(args[0]), float(args[1])
-                except: pass
-
-        weight = parser.rng.uniform(min_val, max_val)
-        weight_str = f"{weight:.3f}".rstrip('0').rstrip('.')
+        args, kwargs = self.parse_args(arg)
+        weight = _generate_weight(parser, args, kwargs)
         
-        return f"({processed_content}){weight_str}", False
+        return f"({processed_content}:{weight})", False
 
 # --- Conditional Logic ---
 
@@ -909,10 +970,6 @@ def _eval_condition(parser: GrammarParser, raw_arg: str) -> bool:
     return current_val != test_val
 
 class CmdIf(BaseCommand):
-    """
-    Conditional [if "x == y"]...[/if]
-    Safely handles nested conditions.
-    """
     def __init__(self):
         self.name = "if"
         self.is_container = True
@@ -928,16 +985,11 @@ class CmdIf(BaseCommand):
         return result, True
 
 class CmdElseIf(BaseCommand):
-    """
-    [elseif condition]
-    Safely handles nested conditions.
-    """
     def __init__(self):
         self.name = "elseif"
         self.is_container = True
 
     def execute(self, parser: GrammarParser, arg: str, content: str) -> Tuple[str, bool]:
-        # If previous condition was TRUE, skip this block entirely
         if parser.last_condition_result is not False: 
             return "", False
         
@@ -968,9 +1020,6 @@ class CmdElseIf(BaseCommand):
         return result, True
 
 class CmdElse(BaseCommand):
-    """
-    [else]
-    """
     def __init__(self):
         self.name = "else"
         self.is_container = True
@@ -982,9 +1031,6 @@ class CmdElse(BaseCommand):
         return "", False
 
 class CmdSwitch(BaseCommand):
-    """
-    [switch var] [case val]...[/case] [/switch]
-    """
     def __init__(self):
         self.name = "switch"
         self.is_container = True
